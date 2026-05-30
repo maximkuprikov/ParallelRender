@@ -26,6 +26,12 @@ class Globals:
     declining_streak = 0
     peak_throughput = 0
 
+    # Progress tracking
+    frames_done = 0
+    frames_total = 0
+    eta_seconds = 0
+    snapshot_frames = set()  # frames that existed before render started
+
     gpu_detection_active = False
     userpref_process = None
     userpref_path = ""
@@ -39,6 +45,19 @@ class Globals:
     gpu_detected = False
     gpu_configured = False
     gpu_config_dir = ""
+
+
+def format_time(seconds):
+    """Formats seconds into a human-readable string like 1ч 23м 45с."""
+    seconds = int(seconds)
+    h, remainder = divmod(seconds, 3600)
+    m, s = divmod(remainder, 60)
+    if h > 0:
+        return f"{h}h {m:02d}m {s:02d}s"
+    elif m > 0:
+        return f"{m}m {s:02d}s"
+    else:
+        return f"{s}s"
 
 
 def get_frame_number_from_filename(filename, output_prefix):
@@ -161,6 +180,26 @@ def terminate_all_processes():
     Globals.active_render_processes.clear()
 
 
+def update_render_progress(scene):
+    """Counts completed frames and updates ETA. Called every timer tick."""
+    output_prefix = scene.render.filepath
+    scan = scan_output_folder(scene.frame_start, scene.frame_end, output_prefix)
+
+    # Subtract frames that already existed before render started
+    new_frames = scan["valid"] - Globals.snapshot_frames
+    Globals.frames_done = len(new_frames)
+    Globals.frames_total = scan["total_expected"]
+
+    elapsed = time.time() - Globals.start_time
+    remaining = Globals.frames_total - Globals.frames_done
+
+    if elapsed > 3 and Globals.frames_done > 0:
+        avg_spf = elapsed / Globals.frames_done  # seconds per frame
+        Globals.eta_seconds = remaining * avg_spf
+    else:
+        Globals.eta_seconds = 0
+
+
 def check_render_status():
     for proc in Globals.active_render_processes[:]:
         if proc.poll() is not None:
@@ -221,13 +260,20 @@ def check_render_status():
                     area.tag_redraw()
             launch_benchmark_iteration(bpy.context)
 
+    if Globals.is_rendering_active:
+        update_render_progress(bpy.context.scene)
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+
     if Globals.is_rendering_active and not Globals.active_render_processes:
 
         Globals.elapsed_time = time.time() - Globals.start_time
         scene = bpy.context.scene
-        frames = scene.frame_end - scene.frame_start + 1
-        Globals.seconds_per_frame = Globals.elapsed_time / frames
+        frames = Globals.frames_total or (scene.frame_end - scene.frame_start + 1)
+        Globals.seconds_per_frame = Globals.elapsed_time / frames if frames else 0
         Globals.is_rendering_active = False
+        Globals.eta_seconds = 0
 
         def draw_popup(self, context):
             self.layout.label(
@@ -465,6 +511,15 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
         Globals.active_render_processes.clear()
         Globals.start_time = time.time()
         Globals.is_rendering_active = True
+        Globals.frames_done = 0
+        Globals.eta_seconds = 0
+
+        # Snapshot existing valid frames so we don't count them as new
+        snap = scan_output_folder(
+            scene.frame_start, scene.frame_end, scene.render.filepath
+        )
+        Globals.snapshot_frames = snap["valid"]
+        Globals.frames_total = snap["total_expected"]
 
         if not bpy.app.timers.is_registered(check_render_status):
             bpy.app.timers.register(check_render_status)
@@ -710,10 +765,33 @@ class RENDER_PT_pseudo_rendering_farm_panel(bpy.types.Panel):
         if Globals.is_benchmarking:
             layout.label(text=Globals.bench_status_msg, icon="PLAY")
         elif Globals.is_rendering_active:
+            total = Globals.frames_total
+            done = Globals.frames_done
+            active = len([p for p in Globals.active_render_processes if p.poll() is None])
+
+            if total > 0:
+                pct = done / total * 100
+                layout.label(
+                    text=f"Frames: {done}/{total}  ({pct:.0f}%)",
+                    icon="RENDER_ANIMATION",
+                )
+            else:
+                layout.label(
+                    text=f"Rendering: {active} instance(s) active",
+                    icon="RENDER_ANIMATION",
+                )
+
+            elapsed = time.time() - Globals.start_time
             layout.label(
-                text=f"Rendering: {len(Globals.active_render_processes)} active",
-                icon="URL",
+                text=f"Elapsed: {format_time(elapsed)}",
+                icon="TIME",
             )
+
+            if Globals.eta_seconds > 0:
+                layout.label(
+                    text=f"ETA: {format_time(Globals.eta_seconds)}",
+                    icon="SORTTIME",
+                )
         else:
             if Globals.elapsed_time != 0:
                 layout.label(
