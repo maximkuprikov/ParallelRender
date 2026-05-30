@@ -501,6 +501,59 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
     bl_idname = "render.pseudo_rendering_farm"
     bl_label = "Launch Pseudo Rendering Farm"
 
+    # Populated in invoke() when existing frames are found in range
+    _frames_to_overwrite: int = 0
+
+    def invoke(self, context, event):
+        scene = context.scene
+
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Please save the scene")
+            return {"CANCELLED"}
+
+        # Resolve effective range early so we can scan
+        if scene.prf_use_custom_range:
+            eff_start = scene.prf_frame_start
+            eff_end = scene.prf_frame_end
+            if eff_start > eff_end:
+                self.report({"ERROR"}, "Custom Start frame must be <= End frame")
+                return {"CANCELLED"}
+        else:
+            eff_start = scene.frame_start
+            eff_end = scene.frame_end
+
+        # Count existing valid frames in the target range
+        scan = scan_output_folder(eff_start, eff_end, scene.render.filepath)
+        existing = scan["valid"]
+        self._frames_to_overwrite = len(existing)
+
+        if self._frames_to_overwrite > 0:
+            # Show confirmation dialog
+            return context.window_manager.invoke_props_dialog(
+                self, width=420, title="Overwrite Warning"
+            )
+
+        # Nothing to overwrite — launch immediately
+        return self.execute(context)
+
+    def draw(self, context):
+        """Content of the confirmation dialog."""
+        scene = context.scene
+        if scene.prf_use_custom_range:
+            eff_start = scene.prf_frame_start
+            eff_end = scene.prf_frame_end
+        else:
+            eff_start = scene.frame_start
+            eff_end = scene.frame_end
+
+        layout = self.layout
+        layout.label(
+            text=f"{self._frames_to_overwrite} rendered frame(s) in range "
+                 f"{eff_start}–{eff_end} will be overwritten.",
+            icon="ERROR",
+        )
+        layout.label(text="Press OK to continue or Cancel to abort.")
+
     def execute(self, context):
         scene = context.scene
 
