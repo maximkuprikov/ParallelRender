@@ -1189,8 +1189,8 @@ def register():
         default="",
     )
     bpy.types.Scene.prf_load_user_addons = bpy.props.BoolProperty(
-        name="Load user add-ons in background",
-        description="Pass --factory-startup to background instances (faster, lower memory). Disable only if your scene requires a specific add-on during render (e.g. a custom exporter or geometry node add-on)",
+        name="Fast background mode (no user add-ons)",
+        description="Use --factory-startup for background instances: faster startup, lower memory. Disable only if your scene requires a specific add-on during render",
         default=True,
     )
     detect_gpus()
