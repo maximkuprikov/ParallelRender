@@ -1,3 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Parallel Render for Blender
+# Based on PseudoRenderingFarm by Michael Klimenko
+# https://github.com/MKlimenko/PseudoRenderingFarm
+#
+# Extended fork by Maxim Kuprikov
+
 import bpy
 import math
 import os
@@ -908,7 +916,7 @@ class RENDER_OT_clear_output_folder(bpy.types.Operator):
                     os.remove(file_path)
                     deleted += 1
                 except Exception as e:
-                    print(f"PseudoRenderingFarmEX: Failed to delete {filename}: {e}")
+                    print(f"ParallelRender: Failed to delete {filename}: {e}")
 
         self.report({"INFO"}, f"Deleted {deleted} frame(s) from output folder")
         return {"FINISHED"}
