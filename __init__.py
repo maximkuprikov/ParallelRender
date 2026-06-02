@@ -473,14 +473,14 @@ def cleanup_userpref_dir():
         Globals.userpref_dir = ""
 
 
-def get_process_priority_kwargs():
-    """Returns kwargs for subprocess.Popen to launch with below-normal CPU priority.
-    GPU scheduling is independent so render speed is not affected."""
+def get_process_priority_kwargs(reduce_priority=False):
+    """Returns kwargs for subprocess.Popen to optionally launch with below-normal CPU priority."""
+    if not reduce_priority:
+        return {}
     if platform.system() == "Windows":
         # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
         return {"creationflags": 0x00004000}
     else:
-        # Unix: preexec_fn to renice the process
         return {"preexec_fn": lambda: os.nice(10)}
 
 
@@ -658,7 +658,7 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
                         env=instance_env,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        **get_process_priority_kwargs(),
+                        **get_process_priority_kwargs(scene.prf_reduce_cpu_priority),
                     )
                 )
             except Exception as e:
@@ -746,7 +746,7 @@ def launch_benchmark_iteration(context):
                 env=instance_env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                **get_process_priority_kwargs(),
+                **get_process_priority_kwargs(bpy.context.scene.prf_reduce_cpu_priority),
             )
         )
 
@@ -1035,6 +1035,7 @@ class RENDER_PT_pseudo_rendering_farm_panel(bpy.types.Panel):
         sub_col.enabled = not is_running
         sub_col.prop(scene, "pseudo_rendering_farm_instances", text="Instances")
         sub_col.prop(scene, "prf_load_user_addons")
+        sub_col.prop(scene, "prf_reduce_cpu_priority")
 
         col.separator()
 
@@ -1228,6 +1229,11 @@ def register():
         description="Use --factory-startup for background instances: faster startup, lower memory. Disable only if your scene requires a specific add-on during render",
         default=True,
     )
+    bpy.types.Scene.prf_reduce_cpu_priority = bpy.props.BoolProperty(
+        name="Reduce CPU priority",
+        description="Launch background instances at below-normal CPU priority. Keeps the system responsive but may slow down frame preparation and denoising",
+        default=False,
+    )
     detect_gpus()
 
 
@@ -1242,6 +1248,7 @@ def unregister():
     del bpy.types.Scene.prf_output_suffix
     del bpy.types.Scene.prf_original_output
     del bpy.types.Scene.prf_load_user_addons
+    del bpy.types.Scene.prf_reduce_cpu_priority
 
 
 if __name__ == "__main__":
