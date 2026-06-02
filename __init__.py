@@ -603,7 +603,7 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
             bpy.app.timers.register(check_render_status)
 
         for i in range(num_instances):
-            cmd = [blender_exe, "-b", blend_path, "-a"]
+            cmd = [blender_exe, "--factory-startup", "--disable-autoexec", "-b", blend_path, "-a"]
             try:
                 if is_system_balanced():
                     subrange = get_worker_subrange(
@@ -686,7 +686,7 @@ def launch_benchmark_iteration(context):
     )
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     for i in range(Globals.current_bench_instances):
-        cmd = [blender_exe, "-b", blend_path, "-o", out_path, "-a"]
+        cmd = [blender_exe, "--factory-startup", "--disable-autoexec", "-b", blend_path, "-o", out_path, "-a"]
         if is_system_balanced():
             subrange = get_worker_subrange(
                 scene.frame_start,
