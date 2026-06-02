@@ -274,6 +274,16 @@ def check_render_status():
             for area in window.screen.areas:
                 area.tag_redraw()
 
+        # Adaptive polling: check more often at the start,
+        # slow down after 2 minutes to reduce disk reads
+        elapsed = time.time() - Globals.start_time
+        if elapsed < 120:
+            poll_interval = 2.0
+        else:
+            poll_interval = 5.0
+    else:
+        poll_interval = 1.0
+
     if Globals.is_rendering_active and not Globals.active_render_processes:
 
         Globals.elapsed_time = time.time() - Globals.start_time
@@ -301,7 +311,7 @@ def check_render_status():
 
         return None
 
-    return 1.0
+    return poll_interval
 
 
 def check_multi_gpu_status():
@@ -430,19 +440,15 @@ def get_env_for_instance(index):
     return Globals.gpu_devices_envs[index % len(Globals.gpu_devices_envs)]
 
 
-def get_worker_subrange(start_idx, end_idx, num_workers, worker_id):
-    total_elements = end_idx - start_idx + 1
-
-    if total_elements <= 0 or worker_id >= num_workers:
-        return None
-
-    chunk_size = math.ceil(total_elements / num_workers)
-    sub_start = start_idx + (worker_id * chunk_size)
-    sub_end = sub_start + chunk_size - 1
-    if sub_start > end_idx:
-        return None
-    sub_end = min(sub_end, end_idx)
-    return (sub_start, sub_end)
+def get_process_priority_kwargs():
+    """Returns kwargs for subprocess.Popen to launch with below-normal CPU priority.
+    GPU scheduling is independent so render speed is not affected."""
+    if platform.system() == "Windows":
+        # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+        return {"creationflags": 0x00004000}
+    else:
+        # Unix: preexec_fn to renice the process
+        return {"preexec_fn": lambda: os.nice(10)}
 
 
 def get_worker_subrange(start_idx, end_idx, num_workers, worker_id):
@@ -612,7 +618,13 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
                         + cmd[-1:]
                     )
                 Globals.active_render_processes.append(
-                    subprocess.Popen(cmd, env=get_env_for_instance(i))
+                    subprocess.Popen(
+                        cmd,
+                        env=get_env_for_instance(i),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        **get_process_priority_kwargs(),
+                    )
                 )
             except Exception as e:
                 self.report({"ERROR"}, f"Failed to launch instance {i}: {e}")
@@ -692,7 +704,13 @@ def launch_benchmark_iteration(context):
             )
 
         Globals.active_render_processes.append(
-            subprocess.Popen(cmd, env=get_env_for_instance(i))
+            subprocess.Popen(
+                cmd,
+                env=get_env_for_instance(i),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **get_process_priority_kwargs(),
+            )
         )
 
     if not bpy.app.timers.is_registered(check_render_status):
