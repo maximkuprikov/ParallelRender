@@ -191,17 +191,21 @@ def terminate_all_processes():
 
 def update_render_progress(scene):
     """Counts completed frames and updates ETA. Called every timer tick."""
-    # Use the effective range stored at render start (respects custom range)
     eff_total = Globals.frames_total
     if eff_total == 0:
         return
 
     output_prefix = scene.render.filepath
-    # Derive eff_start/eff_end from snapshot context stored in frames_total
-    # We scan the full scene range but filter by snapshot delta
-    scan = scan_output_folder(
-        scene.frame_start, scene.frame_end, output_prefix
-    )
+
+    # Use effective range respecting custom range setting
+    if scene.prf_use_custom_range:
+        eff_start = scene.prf_frame_start
+        eff_end = scene.prf_frame_end
+    else:
+        eff_start = scene.frame_start
+        eff_end = scene.frame_end
+
+    scan = scan_output_folder(eff_start, eff_end, output_prefix)
 
     # Subtract frames that already existed before render started
     new_frames = scan["valid"] - Globals.snapshot_frames
@@ -211,7 +215,7 @@ def update_render_progress(scene):
     remaining = eff_total - Globals.frames_done
 
     if elapsed > 3 and Globals.frames_done > 0:
-        avg_spf = elapsed / Globals.frames_done  # seconds per frame
+        avg_spf = elapsed / Globals.frames_done
         Globals.eta_seconds = remaining * avg_spf
     else:
         Globals.eta_seconds = 0
@@ -334,6 +338,43 @@ def check_multi_gpu_status():
     return 1.0
 
 
+def find_userpref_path():
+    """Launches a background Blender process to find the path to userpref.blend.
+    Called once at addon startup regardless of GPU count."""
+    if Globals.userpref_path or Globals.userpref_process is not None:
+        return
+
+    expr = ("import bpy, os; print('USERPREF:' + "
+            "os.path.join(bpy.utils.resource_path('USER'), 'config', 'userpref.blend'))")
+    Globals.userpref_process = subprocess.Popen(
+        [bpy.app.binary_path, "-b", "--python-expr", expr],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def check_userpref_ready():
+    """Timer callback that waits for find_userpref_path() process to finish."""
+    if Globals.userpref_path:
+        return None  # already found, stop timer
+
+    if Globals.userpref_process is None:
+        return None
+
+    if Globals.userpref_process.poll() is not None:
+        stdout, stderr = Globals.userpref_process.communicate()
+        for line in (stdout + stderr).splitlines():
+            if line.startswith("USERPREF:"):
+                Globals.userpref_path = line[len("USERPREF:"):]
+                print(f"ParallelRender: Found userpref.blend at {Globals.userpref_path}")
+                return None  # stop timer
+        print("ParallelRender: Could not find userpref.blend in process output")
+        return None
+
+    return 1.0  # check again in 1 second
+
+
 def detect_gpus():
     if Globals.gpu_detected:
         return
@@ -359,24 +400,8 @@ def detect_gpus():
 
 def setup_multi_gpu():
     if not Globals.userpref_path:
-        if Globals.userpref_process is None:
-            expr = "import bpy, os; print('USERPREF:' + os.path.join(bpy.utils.resource_path('USER'), 'config', 'userpref.blend'))"
-
-            Globals.userpref_process = subprocess.Popen(
-                [bpy.app.binary_path, "-b", "--python-expr", expr],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            return
-        status = Globals.userpref_process.poll()
-        if status is not None:
-            stdout, stderr = Globals.userpref_process.communicate()
-
-            for line in (stdout + stderr).splitlines():
-                if line.startswith("USERPREF:"):
-                    Globals.userpref_path = line[len("USERPREF:") :]
-                    return
+        # userpref.blend not yet found — wait for check_userpref_ready timer
+        return
 
     if not Globals.gpu_config_dir:
         Globals.gpu_config_dir = tempfile.mkdtemp(prefix="gpu_config_")
@@ -455,8 +480,10 @@ def get_factory_startup_env():
     that contains only userpref.blend. This lets --factory-startup skip all
     user add-ons but still inherit GPU/device preferences."""
     if not Globals.userpref_path:
-        # userpref.blend not found yet — fall back to normal env
+        print("ParallelRender: userpref_path is empty — falling back to default env (GPU may not be used)")
         return os.environ.copy()
+
+    print(f"ParallelRender: userpref_path = {Globals.userpref_path}")
 
     if not Globals.userpref_dir:
         Globals.userpref_dir = tempfile.mkdtemp(prefix="prf_userpref_")
@@ -647,6 +674,12 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
             factory = ["--factory-startup", "--disable-autoexec"] if scene.prf_load_user_addons else []
             cmd = [blender_exe] + factory + ["-b", blend_path, "-a"]
             instance_env = get_factory_startup_env() if scene.prf_load_user_addons else get_env_for_instance(i)
+
+            # Debug log
+            print(f"ParallelRender: Instance {i} cmd: {' '.join(cmd)}")
+            print(f"ParallelRender: Instance {i} BLENDER_USER_CONFIG: {instance_env.get('BLENDER_USER_CONFIG', 'NOT SET')}")
+            userpref_in_dir = os.path.join(instance_env.get('BLENDER_USER_CONFIG', ''), 'userpref.blend')
+            print(f"ParallelRender: Instance {i} userpref.blend exists: {os.path.isfile(userpref_in_dir)}")
             try:
                 if is_system_balanced():
                     subrange = get_worker_subrange(
@@ -1243,6 +1276,8 @@ def register():
         default=False,
     )
     detect_gpus()
+    find_userpref_path()
+    bpy.app.timers.register(check_userpref_ready, first_interval=1.0)
 
 
 def unregister():
