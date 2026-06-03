@@ -480,10 +480,7 @@ def get_factory_startup_env():
     that contains only userpref.blend. This lets --factory-startup skip all
     user add-ons but still inherit GPU/device preferences."""
     if not Globals.userpref_path:
-        print("ParallelRender: userpref_path is empty — falling back to default env (GPU may not be used)")
         return os.environ.copy()
-
-    print(f"ParallelRender: userpref_path = {Globals.userpref_path}")
 
     if not Globals.userpref_dir:
         Globals.userpref_dir = tempfile.mkdtemp(prefix="prf_userpref_")
@@ -698,21 +695,6 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
             gpu_args = ["--python-expr", gpu_expr] if gpu_expr else []
             cmd = [blender_exe] + factory + gpu_args + ["-b", blend_path, "-a"]
             instance_env = get_factory_startup_env() if scene.prf_load_user_addons else get_env_for_instance(i)
-
-            # Debug log
-            print(f"ParallelRender: Instance {i} cmd: {' '.join(cmd)}")
-            print(f"ParallelRender: Instance {i} BLENDER_USER_CONFIG: {instance_env.get('BLENDER_USER_CONFIG', 'NOT SET')}")
-            userpref_in_dir = os.path.join(instance_env.get('BLENDER_USER_CONFIG', ''), 'userpref.blend')
-            print(f"ParallelRender: Instance {i} userpref.blend exists: {os.path.isfile(userpref_in_dir)}")
-            # Debug: первый инстанс пишет лог в файл
-            if i == 0:
-                log_path = os.path.join(tempfile.gettempdir(), "prf_instance_0.log")
-                stdout_target = open(log_path, "w")
-                stderr_target = subprocess.STDOUT
-                print(f"ParallelRender: Instance 0 log -> {log_path}")
-            else:
-                stdout_target = subprocess.DEVNULL
-                stderr_target = subprocess.DEVNULL
             try:
                 if is_system_balanced():
                     subrange = get_worker_subrange(
@@ -730,8 +712,8 @@ class RENDER_OT_pseudo_rendering_farm(bpy.types.Operator):
                     subprocess.Popen(
                         cmd,
                         env=instance_env,
-                        stdout=stdout_target,
-                        stderr=stderr_target,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                         **get_process_priority_kwargs(scene.prf_reduce_cpu_priority),
                     )
                 )
